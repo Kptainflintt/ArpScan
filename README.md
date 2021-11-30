@@ -8,3 +8,5 @@ The purpose of this script (currently in v0.1) is to scan network for hosts usin
 Actually, you can scan network directly attached to NIC
 
 In the future, I will add possibilty to provide a range manually.
+
+!!!WARNING!!! For english users, you MUST change "dynamique" to "dynamic" at line 78
