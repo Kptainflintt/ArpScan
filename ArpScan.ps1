@@ -16,47 +16,101 @@ if ((Test-Admin) -eq $false)  {
 }
 
 
-Write-Host "Ce script s'execute en Administrateur" -foregroundcolor "yellow"
+#Write-Host "Ce script s'execute en Administrateur" -foregroundcolor "yellow"
+1..2 | % -begin {cls} -process {Write-Host "-----!!Ce script s'execute en Administrateur!!-----" -ForegroundColor "yellow";sleep 1;cls;sleep 1}
 
-#Selection de l'interface pour le scan
-Get-NetIpaddress |where {($_.PrefixLength -ne 64) -and ($_.PrefixLength -ne 128)} | Format-Table -Property ifIndex,IPAddress
+Write-Host "1. Scan selon une plage entrée manuellement"
+Write-Host "2. Scan selon une interface"
 
-$index = Read-Host "Tapez le numéro d'index de la carte réseau"
-$Address = Get-NetIPAddress | where {($_.ifIndex -eq $index) -and ($_.AddressFamily -eq "IPv4")} | Select-Object -ExpandProperty IPAddress
-$Mask = Get-NetIPAddress | where {($_.ifIndex -eq $index) -and ($_.AddressFamily -eq "IPv4")} | Select-Object -ExpandProperty PrefixLength
+$choice = Read-Host "Votre choix"
 
-# Sélection de la partie réseau
-if ($Mask -eq 24){
-$Network = $Address.Split(".")[0,1,2] -join '.'
-$Subnet = 1..254 | % {"$Network.$_"}
+if ($choice -eq 1) {
+    Write-Host "Attention, scanner une grande plage IP risque de donner des résultats faussés. Les entrées ARP ayant une durée courte!" -ForegroundColor "red"
+    $Address1 = Read-Host "Adresse de début"
+    $Address2 = Read-Host "Adresse de fin"
+    [int]$oct1 ,[int]$oct2 ,[int]$oct3 ,[int]$oct4 = $Address1.Split(".")
+    [int]$oct1b , [int]$oct2b ,[int]$oct3b ,[int]$oct4b = $Address2.Split(".")
+        if ($oct2 -ne $oct2b){
+        $Range = $oct2..$oct2b | % {"$oct1.$_"}
+        $Sub1 = foreach ($IPs in $Range) {
+                $oct3..$oct3b | % {"$IPs.$_"}
+                }
+        $Subnet += Foreach ($Piece in $Sub1){
+                   $oct4..$oct4b | % {"$Piece.$_"}
+                    if ($Subnet -ne $Address2) {
+                    continue
+                    }
+                    else {
+                    break
+                    }
+                   }
+        }
+        elseif ($oct3 -ne $oct3b){
+        $Range = $oct3..$oct3b | % {"$oct1.$oct2.$_"}
+        $Subnet += foreach ($IPs in $Range) {
+                   $oct4..254 | % {"$IPs.$_"}
+                    if ($Subnet -ne $Address2) {
+                    continue
+                    }
+                    else {
+                    break
+                    }
+                   }
+        }
+        else {
+        $Range = "$oct1.$oct2.$oct3"
+        $Subnet = $oct4..$oct4b | % {"$Range.$_"}
+        }
 }
-elseif ($Mask -eq 16){
-$Network = $Address.Split(".")[0,1] -join '.'
-$Range = 0..254 | % {"$Network.$_"}
-$Subnet = foreach ($IPs in $Range) {
-          1..254 | % {"$IPs.$_"} #-OutVariable Subnet | Out-Null
-          }
-}
-elseif ($Mask -eq 8){
-$Network = $Address.Split(".")[0] -join '.'
-$Range = 0..254 | % {"$Network.$_"}
-$Subnet = foreach ($IPs in $Range) {
-          0..254 | % {"$IPs.$_"} -OutVariable Sub1 | Out-Null
-            Foreach ($Piece in $Sub1){
-                1..254 | % {"$Piece.$_"} #-OutVariable Subnet | Out-Null
-            }
+
+
+elseif ($choice -eq 2) {
+    #Selection de l'interface pour le scan
+    Get-NetIpaddress |where {($_.PrefixLength -ne 64) -and ($_.PrefixLength -ne 128)} | Format-Table -Property ifIndex,IPAddress
+    $index = Read-Host "Tapez le numéro d'index de la carte réseau"
+    
+    #Déclaration des variables
+    $Address = Get-NetIPAddress | where {($_.ifIndex -eq $index) -and ($_.AddressFamily -eq "IPv4")} | Select-Object -ExpandProperty IPAddress
+    $Mask = Get-NetIPAddress | where {($_.ifIndex -eq $index) -and ($_.AddressFamily -eq "IPv4")} | Select-Object -ExpandProperty PrefixLength
+    
+    # Decoupage de l'adresse d'interface en fonction du masque
+    if ($Mask -eq 24){
+    $Network = $Address.Split(".")[0,1,2] -join '.'
+    $Subnet = 1..254 | % {"$Network.$_"}
+    }
+    elseif ($Mask -eq 16){
+    $Network = $Address.Split(".")[0,1] -join '.'
+    $Range = 0..254 | % {"$Network.$_"}
+    $Subnet = foreach ($IPs in $Range) {
+              1..254 | % {"$IPs.$_"} #-OutVariable Subnet | Out-Null
+              }
+    }
+    elseif ($Mask -eq 8){
+    $Network = $Address.Split(".")[0] -join '.'
+    $Range = 0..254 | % {"$Network.$_"}
+    $Subnet = foreach ($IPs in $Range) {
+              0..254 | % {"$IPs.$_"} -OutVariable Sub1 | Out-Null
+                Foreach ($Piece in $Sub1){
+                    1..254 | % {"$Piece.$_"} #-OutVariable Subnet | Out-Null
+                }
+        }
+    }
+    else {
+    Write-Host "Masque non supporté, merci de faire le choix n°1"
+    continue 
     }
 }
+
 else {
-Write-Host "Votre masque de sous réseau ne permet pas d'utiliser ce script (en cours d'amélioration)"
-continue 
+Write-Host "Mauvaise saisie, arrêt du script"
+Break
 }
 
 #Vider le cache ARP
 netsh interface ip delete arpcache
 Write-Host "Cache ARP supprimé" -ForegroundColor "yellow"
 
-#Scan UDP
+#Scan UDP sur les adresses de la variable
 $ASCIIEncoding = New-Object System.Text.ASCIIEncoding
 $Bytes = $ASCIIEncoding.GetBytes("a")
 $UDP = New-Object System.Net.Sockets.Udpclient
@@ -65,16 +119,16 @@ $counter = 0
 Foreach ($addr in $Subnet){
         $UDP.Connect($addr,1)
         [void]$UDP.Send($Bytes,$Bytes.length)
-        #Write-Progress -Activity "Scan de $addr"
+        #Ajout d'une barre de progression
         $counter++
         Write-Progress -Activity 'Scan en cours' -CurrentOperation $addr -PercentComplete (($counter / $Subnet.count) * 100)
         #Start-Sleep -Milliseconds 200
           }
 
-
+#Affichage de la nouvelle table ARP et insertion dans une variable
 $Hosts = arp -a
 
-
+    #Tri et mise en forme
     $Hosts = $Hosts | Where-Object {$_ -match "dynamique"} | % {($_.trim() -replace " {1,}",",") | ConvertFrom-Csv -Header "IP","MACAddress"}
     $Hosts = $Hosts | Where-Object {$_.IP -in $Subnet}
 
